@@ -120,8 +120,7 @@ async def extract(payload: Dict[str, Any] = Body(...)):
         if not items:
             return _err("failed to extract formats", 422)
 
-        out = [{"quality": it.quality, "url": it.url} for it in items]
-        out.append({"name": name})
+        out = [{"quality": it.quality, "url": it.url, "name": name} for it in items]
         return JSONResponse(content=out)
 
     except Exception as e:
