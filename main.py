@@ -76,9 +76,30 @@ def _quality_from_resolution(res: Optional[str], width: Optional[int], height: O
     return None
 
 
+def _is_m3u8_format(f: dict) -> bool:
+    ext = (f.get("ext") or "").lower()
+    if ext == "m3u8":
+        return True
+    proto = (f.get("protocol") or "").lower()
+    if "m3u8" in proto:
+        return True
+    url = (f.get("url") or "").lower()
+    if ".m3u8" in url:
+        return True
+    return False
+
+
+def _has_av_in_one(f: dict) -> bool:
+    vcodec = f.get("vcodec")
+    acodec = f.get("acodec")
+    return (vcodec and vcodec != "none") and (acodec and acodec != "none")
+
+
 def _select_items(info: dict) -> List[PickItem]:
     formats = info.get("formats") or []
     best_by_quality: Dict[str, str] = {}
+    m3u8_by_quality: Dict[str, str] = {}
+    fallback_by_quality: Dict[str, str] = {}
 
     for f in formats:
         if not isinstance(f, dict):
@@ -87,17 +108,33 @@ def _select_items(info: dict) -> List[PickItem]:
         if not url:
             continue
 
-        res = f.get("resolution")
-        w = f.get("width")
-        h = f.get("height")
-        q = _quality_from_resolution(res, w, h)
+        q = _quality_from_resolution(f.get("resolution"), f.get("width"), f.get("height"))
         if not q:
             continue
 
-        if q not in best_by_quality:
-            best_by_quality[q] = url
+        if _has_av_in_one(f):
+            if q not in best_by_quality:
+                best_by_quality[q] = url
+            continue
 
-    items = [PickItem(quality=q, url=u) for q, u in best_by_quality.items()]
+        if _is_m3u8_format(f):
+            if q not in m3u8_by_quality:
+                m3u8_by_quality[q] = url
+            continue
+
+        if q not in fallback_by_quality:
+            fallback_by_quality[q] = url
+
+    merged: Dict[str, str] = {}
+    for q in set(list(best_by_quality.keys()) + list(m3u8_by_quality.keys()) + list(fallback_by_quality.keys())):
+        if q in best_by_quality:
+            merged[q] = best_by_quality[q]
+        elif q in m3u8_by_quality:
+            merged[q] = m3u8_by_quality[q]
+        else:
+            merged[q] = fallback_by_quality[q]
+
+    items = [PickItem(quality=q, url=u) for q, u in merged.items()]
     items.sort(key=lambda it: _sort_key(it.quality))
     return items
 
