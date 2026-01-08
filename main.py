@@ -34,72 +34,23 @@ class PickItem:
     url: str
 
 
-def _quality_from_resolution(res: Optional[str], width: Optional[int], height: Optional[int]) -> Optional[str]:
-    w = None
-    h = None
-    if isinstance(res, str) and "x" in res:
-        a, b = res.lower().split("x", 1)
-        try:
-            w = int(a.strip())
-            h = int(b.strip())
-        except Exception:
-            w = None
-            h = None
-    if isinstance(width, int) and width > 0:
-        w = width
-    if isinstance(height, int) and height > 0:
-        h = height
-    if isinstance(w, int) and w > 0:
-        if w >= 1920:
-            return "1080p"
-        if w >= 1280:
-            return "720p"
-        if w >= 854:
-            return "480p"
-        if w >= 640:
-            return "360p"
-        if w >= 426:
-            return "240p"
-        return "144p"
-    if isinstance(h, int) and h > 0:
-        if h >= 1080:
-            return "1080p"
-        if h >= 720:
-            return "720p"
-        if h >= 480:
-            return "480p"
-        if h >= 360:
-            return "360p"
-        if h >= 240:
-            return "240p"
-        return "144p"
-    return None
-
-
-def _is_m3u8_format(f: dict) -> bool:
+def _has_audio_or_manifest(f: dict) -> bool:
+    acodec = f.get("acodec")
+    if acodec and acodec != "none":
+        return True
     ext = (f.get("ext") or "").lower()
-    if ext == "m3u8":
+    if ext in ["m3u8", "mpd"]:
         return True
     proto = (f.get("protocol") or "").lower()
-    if "m3u8" in proto:
-        return True
-    url = (f.get("url") or "").lower()
-    if ".m3u8" in url:
+    if "m3u8" in proto or "dash" in proto:
         return True
     return False
 
 
-def _has_av_in_one(f: dict) -> bool:
-    vcodec = f.get("vcodec")
-    acodec = f.get("acodec")
-    return (vcodec and vcodec != "none") and (acodec and acodec != "none")
-
-
 def _select_items(info: dict) -> List[PickItem]:
     formats = info.get("formats") or []
-    best_by_quality: Dict[str, str] = {}
-    m3u8_by_quality: Dict[str, str] = {}
-    fallback_by_quality: Dict[str, str] = {}
+    best_by_height: Dict[int, str] = {}
+    fallback_by_height: Dict[int, str] = {}
 
     for f in formats:
         if not isinstance(f, dict):
@@ -108,33 +59,23 @@ def _select_items(info: dict) -> List[PickItem]:
         if not url:
             continue
 
-        q = _quality_from_resolution(f.get("resolution"), f.get("width"), f.get("height"))
-        if not q:
+        vcodec = f.get("vcodec")
+        if vcodec == "none":
             continue
 
-        if _has_av_in_one(f):
-            if q not in best_by_quality:
-                best_by_quality[q] = url
+        h = f.get("height")
+        if not isinstance(h, int) or h <= 0:
             continue
 
-        if _is_m3u8_format(f):
-            if q not in m3u8_by_quality:
-                m3u8_by_quality[q] = url
-            continue
-
-        if q not in fallback_by_quality:
-            fallback_by_quality[q] = url
-
-    merged: Dict[str, str] = {}
-    for q in set(list(best_by_quality.keys()) + list(m3u8_by_quality.keys()) + list(fallback_by_quality.keys())):
-        if q in best_by_quality:
-            merged[q] = best_by_quality[q]
-        elif q in m3u8_by_quality:
-            merged[q] = m3u8_by_quality[q]
+        if _has_audio_or_manifest(f):
+            if h not in best_by_height:
+                best_by_height[h] = url
         else:
-            merged[q] = fallback_by_quality[q]
+            if h not in fallback_by_height:
+                fallback_by_height[h] = url
 
-    items = [PickItem(quality=q, url=u) for q, u in merged.items()]
+    src = best_by_height if best_by_height else fallback_by_height
+    items = [PickItem(quality=f"{h}p", url=u) for h, u in src.items()]
     items.sort(key=lambda it: _sort_key(it.quality))
     return items
 
