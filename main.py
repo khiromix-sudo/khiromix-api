@@ -34,9 +34,23 @@ class PickItem:
     url: str
 
 
+def _has_audio_or_manifest(f: dict) -> bool:
+    acodec = f.get("acodec")
+    if acodec and acodec != "none":
+        return True
+    ext = (f.get("ext") or "").lower()
+    if ext in ["m3u8", "mpd"]:
+        return True
+    proto = (f.get("protocol") or "").lower()
+    if "m3u8" in proto or "dash" in proto:
+        return True
+    return False
+
+
 def _select_items(info: dict) -> List[PickItem]:
     formats = info.get("formats") or []
     best_by_height: Dict[int, str] = {}
+    fallback_by_height: Dict[int, str] = {}
 
     for f in formats:
         if not isinstance(f, dict):
@@ -53,10 +67,15 @@ def _select_items(info: dict) -> List[PickItem]:
         if not isinstance(h, int) or h <= 0:
             continue
 
-        if h not in best_by_height:
-            best_by_height[h] = url
+        if _has_audio_or_manifest(f):
+            if h not in best_by_height:
+                best_by_height[h] = url
+        else:
+            if h not in fallback_by_height:
+                fallback_by_height[h] = url
 
-    items = [PickItem(quality=f"{h}p", url=u) for h, u in best_by_height.items()]
+    src = best_by_height if best_by_height else fallback_by_height
+    items = [PickItem(quality=f"{h}p", url=u) for h, u in src.items()]
     items.sort(key=lambda it: _sort_key(it.quality))
     return items
 
@@ -103,15 +122,17 @@ async def extract(payload: Dict[str, Any] = Body(...)):
     if cookies is not None and not isinstance(cookies, str):
         return _err("cookies must be a string")
 
+    is_facebook = ".facebook.com" in (url or "").lower()
+
     cookie_path = None
     try:
-        if cookies and cookies.strip():
+        if is_facebook and cookies and cookies.strip():
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
             tmp.write(cookies.encode("utf-8", errors="ignore"))
             tmp.close()
             cookie_path = tmp.name
 
-        info = await _run_extract(url, headers=headers, cookiefile=cookie_path)
+        info = await _run_extract(url, headers=headers, cookiefile=cookie_path if is_facebook else None)
         items = _select_items(info)
 
         if not items and _is_direct_media(url):
